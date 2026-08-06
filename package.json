@@ -1,0 +1,13 @@
+{
+  "name": "sefaz-mtls-proxy",
+  "version": "1.0.0",
+  "description": "Proxy mTLS para comunicação com SEFAZ NFeDistribuicaoDFe",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-forge": "^1.3.1"
+  }
+}
