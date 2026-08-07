@@ -96,6 +96,7 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
   const host = options.host || SEFAZ_HOST;
   const path = options.path || SEFAZ_PATH;
   const action = options.action || SOAP_ACTION;
+  const soapVersion = options.soapVersion || "1.2";
   return new Promise((resolve, reject) => {
     const bodyBytes = Buffer.from(soapBody, "utf-8");
 
@@ -106,6 +107,20 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
       minVersion: "TLSv1.2",
     });
 
+    const headers = {
+      "Content-Length": bodyBytes.length,
+      "User-Agent": "BuscaNotas/1.0",
+      "Connection": "close",
+    };
+
+    // SOAP 1.1: text/xml + SOAPAction header; SOAP 1.2: application/soap+xml + action in Content-Type
+    if (soapVersion === "1.1") {
+      headers["Content-Type"] = "text/xml; charset=utf-8";
+      headers["SOAPAction"] = `"${action}"`;
+    } else {
+      headers["Content-Type"] = `application/soap+xml; charset=utf-8; action="${action}"`;
+    }
+
     const req = https.request(
       {
         hostname: host,
@@ -113,12 +128,7 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
         path: path,
         method: "POST",
         agent,
-        headers: {
-          "Content-Type": `application/soap+xml; charset=utf-8; action="${action}"`,
-          "Content-Length": bodyBytes.length,
-          "User-Agent": "BuscaNotas/1.0",
-          "Connection": "close",
-        },
+        headers,
         timeout: 60000,
       },
       (res) => {
@@ -296,29 +306,25 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 
     const signedXml = signEventXml(eventXml, certPem, keyPem);
 
+    // SOAP 1.1 — SEFAZ NFeRecepcaoEvento4 espera text/xml + SOAPAction header (não soap12)
+    // Body: nfeDadosMsg direto no body, sem wrapper nfeRecepcaoEvento, sem nfeCabecMsg no header
     const soapEnvelope =
       '<?xml version="1.0" encoding="UTF-8"?>' +
-      '<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">' +
-      '<soap12:Header>' +
-      '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
-      '<cUF>91</cUF><versaoDados>1.00</versaoDados>' +
-      '</nfeCabecMsg>' +
-      '</soap12:Header>' +
-      '<soap12:Body>' +
-      '<nfeRecepcaoEvento xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
-      '<nfeDadosMsg>' +
+      '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">' +
+      '<soap:Body>' +
+      '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
       signedXml +
       '</nfeDadosMsg>' +
-      '</nfeRecepcaoEvento>' +
-      '</soap12:Body>' +
-      '</soap12:Envelope>';
+      '</soap:Body>' +
+      '</soap:Envelope>';
 
     const manifestacaoOptions = {
       host: "www.nfe.fazenda.gov.br",
       path: "/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
       action: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento",
+      soapVersion: "1.1",
     };
-    console.log("[manifestacao] Enviando para host:", manifestacaoOptions.host, "path:", manifestacaoOptions.path);
+    console.log("[manifestacao] SOAP 1.1 → host:", manifestacaoOptions.host, "path:", manifestacaoOptions.path);
 
     try {
       const responseXml = await sendToSefaz(soapEnvelope, certPem, keyPem, manifestacaoOptions);
@@ -329,7 +335,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
         error: sefazError.message,
         host: manifestacaoOptions.host,
         path: manifestacaoOptions.path,
-        proxyVersion: "2.1.0-fix-manifestacao"
+        proxyVersion: "2.2.0-soap11"
       });
     }
   } catch (error) {
@@ -339,7 +345,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "2.1.0-fix-manifestacao", manifestacaoHost: "www.nfe.fazenda.gov.br", deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "2.2.0-soap11", manifestacaoHost: "www.nfe.fazenda.gov.br", soapVersion: "1.1", deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
