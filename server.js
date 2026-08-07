@@ -306,25 +306,28 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 
     const signedXml = signEventXml(eventXml, certPem, keyPem);
 
-    // SOAP 1.1 — SEFAZ NFeRecepcaoEvento4 espera text/xml + SOAPAction header (não soap12)
-    // Body: nfeDadosMsg direto no body, sem wrapper nfeRecepcaoEvento, sem nfeCabecMsg no header
+    // SOAP 1.1 — SEFAZ NFeRecepcaoEvento4
+    // SOAPAction correto: nfeRecepcaoEventoNF (com sufixo NF), não nfeRecepcaoEvento
+    // Body: nfeRecepcaoEventoNF > nfeDadosMsg > signed XML
     const soapEnvelope =
       '<?xml version="1.0" encoding="UTF-8"?>' +
       '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">' +
       '<soap:Body>' +
-      '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
+      '<nfeRecepcaoEventoNF xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
+      '<nfeDadosMsg>' +
       signedXml +
       '</nfeDadosMsg>' +
+      '</nfeRecepcaoEventoNF>' +
       '</soap:Body>' +
       '</soap:Envelope>';
 
     const manifestacaoOptions = {
       host: "www.nfe.fazenda.gov.br",
       path: "/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
-      action: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento",
+      action: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEventoNF",
       soapVersion: "1.1",
     };
-    console.log("[manifestacao] SOAP 1.1 → host:", manifestacaoOptions.host, "path:", manifestacaoOptions.path);
+    console.log("[manifestacao] SOAP 1.1 → host:", manifestacaoOptions.host, "path:", manifestacaoOptions.path, "action:", manifestacaoOptions.action);
 
     try {
       const responseXml = await sendToSefaz(soapEnvelope, certPem, keyPem, manifestacaoOptions);
@@ -345,7 +348,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "2.2.0-soap11", manifestacaoHost: "www.nfe.fazenda.gov.br", soapVersion: "1.1", deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "2.3.0-soap11-recepcaoNF", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
