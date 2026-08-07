@@ -1,28 +1,42 @@
 /**
  * Proxy mTLS para SEFAZ NFeDistribuicaoDFe
+ *
+ * Deploy: Railway, Render, Fly.io, ou qualquer VPS com Node.js 18+
+ * Comandos:
+ *   npm install express node-forge
+ *   node server.js
+ *
+ * Variáveis de ambiente:
+ *   PORT          - porta (default 3000)
+ *   PROXY_TOKEN   - token de autenticação (obrigatório)
  */
 
 const express = require("express");
 const https = require("https");
 const forge = require("node-forge");
+const { SignedXml } = require("xml-crypto");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 const SEFAZ_HOST = "www1.nfe.fazenda.gov.br";
 const SEFAZ_PATH = "/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx";
-const SOAP_ACTION = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/NfeDistDFeInteresse";
+const SOAP_ACTION =
+  "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/NfeDistDFeInteresse";
 const PORT = process.env.PORT || 3000;
 const PROXY_TOKEN = process.env.PROXY_TOKEN;
 
 function authMiddleware(req, res, next) {
   const token = req.headers["x-proxy-token"];
   if (!PROXY_TOKEN || token !== PROXY_TOKEN) {
-    return res.status(401).json({ error: "Token invalido" });
+    return res.status(401).json({ error: "Token inválido" });
   }
   next();
 }
 
+/**
+ * Extrai certificado (PEM) e chave privada (PEM) de um buffer PFX.
+ */
 function extractPfxCredentials(pfxBuffer, password) {
   const asn1 = forge.asn1.fromDer(pfxBuffer.toString("binary"));
   const p12 = forge.pkcs12.pkcs12FromAsn1(asn1, password, false);
@@ -30,11 +44,13 @@ function extractPfxCredentials(pfxBuffer, password) {
   const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
   const cert = certBags[forge.pki.oids.certBag]?.[0]?.cert;
 
-  const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+  const keyBags = p12.getBags({
+    bagType: forge.pki.oids.pkcs8ShroudedKeyBag,
+  });
   const privateKey = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0]?.key;
 
   if (!cert || !privateKey) {
-    throw new Error("Certificado ou chave privada nao encontrados no PFX.");
+    throw new Error("Certificado ou chave privada não encontrados no PFX.");
   }
 
   return {
@@ -43,9 +59,58 @@ function extractPfxCredentials(pfxBuffer, password) {
   };
 }
 
-function sendToSefaz(soapBody, certPem, keyPem) {
+/**
+ * Assina um XML de evento (manifestação) usando XMLDSig.
+ */
+function signEventXml(eventXml, certPem, keyPem) {
+  const certBase64 = certPem
+    .replace("-----BEGIN CERTIFICATE-----", "")
+    .replace("-----END CERTIFICATE-----", "")
+    .replace(/\s+/g, "");
+
+  const sig = new SignedXml();
+  sig.signingKey = keyPem;
+  sig.canonicalizationAlgorithm = "http://www.w3.org/2001/10/xml-exc-c14n#";
+  sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
+  sig.keyInfoProvider = {
+    getKeyInfo: function () {
+      return '<X509Data><X509Certificate>' + certBase64 + '</X509Certificate></X509Data>';
+    },
+  };
+  sig.addReference(
+    "//*[local-name()='infEvento']",
+    ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/2001/10/xml-exc-c14n#"],
+    "http://www.w3.org/2000/09/xmldsig#sha1"
+  );
+  sig.computeSignature(eventXml, {
+    prefix: "ds",
+    location: { reference: "//*[local-name()='infEvento']", action: "after" },
+  });
+  return sig.getSignedXml();
+}
+
+/**
+ * Faz a requisição SOAP à SEFAZ usando mTLS.
+ */
+function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
+  const host = options.host || SEFAZ_HOST;
+  const path = options.path || SEFAZ_PATH;
+  const action = options.action || SOAP_ACTION;
   return new Promise((resolve, reject) => {
     const bodyBytes = Buffer.from(soapBody, "utf-8");
+    const httpRequest =
+      `POST ${path} HTTP/1.1\r\n` +
+      `Host: ${host}\r\n` +
+      `Content-Type: application/soap+xml; charset=utf-8; action="${action}"\r\n` +
+      `Content-Length: ${bodyBytes.length}\r\n` +
+      `User-Agent: BuscaNotas/1.0\r\n` +
+      `Connection: close\r\n` +
+      `\r\n`;
+
+    const fullRequest = Buffer.concat([
+      Buffer.from(httpRequest, "utf-8"),
+      bodyBytes,
+    ]);
 
     const agent = new https.Agent({
       cert: certPem,
@@ -56,16 +121,15 @@ function sendToSefaz(soapBody, certPem, keyPem) {
 
     const req = https.request(
       {
-        hostname: SEFAZ_HOST,
+        hostname: host,
         port: 443,
-        path: SEFAZ_PATH,
+        path: path,
         method: "POST",
         agent,
         headers: {
-          "Content-Type": 'application/soap+xml; charset=utf-8; action="' + SOAP_ACTION + '"',
-          "Content-Length": bodyBytes.length,
+          "Content-Type": `application/soap+xml; charset=utf-8; action="${action}"`,
+          "Content-Length": fullRequest.length,
           "User-Agent": "BuscaNotas/1.0",
-          "Connection": "close",
         },
         timeout: 60000,
       },
@@ -74,25 +138,63 @@ function sendToSefaz(soapBody, certPem, keyPem) {
         res.on("data", (chunk) => chunks.push(chunk));
         res.on("end", () => {
           const fullResponse = Buffer.concat(chunks).toString("utf-8");
-          // Check status code from the response object
-          if (res.statusCode !== 200) {
-            reject(new Error("SEFAZ HTTP " + res.statusCode + ": " + fullResponse.substring(0, 500)));
+          const headerEnd = fullResponse.indexOf("\r\n\r\n");
+          if (headerEnd === -1) {
+            reject(
+              new Error(
+                `Resposta sem cabeçalho. bytes=${fullResponse.length}`
+              )
+            );
             return;
           }
-          resolve(fullResponse);
+          const headerStr = fullResponse.substring(0, headerEnd);
+          let body = fullResponse.substring(headerEnd + 4);
+
+          if (headerStr.toLowerCase().includes("transfer-encoding: chunked")) {
+            body = decodeChunked(body);
+          }
+
+          const statusCode = parseInt(
+            headerStr.split("\r\n")[0].split(" ")[1]
+          );
+          if (statusCode !== 200) {
+            reject(
+              new Error(`SEFAZ HTTP ${statusCode}: ${body.substring(0, 1000)}`)
+            );
+            return;
+          }
+          resolve(body);
         });
       }
     );
 
     req.on("error", reject);
     req.on("timeout", () => {
-      req.destroy(new Error("Timeout na conexao com a SEFAZ"));
+      req.destroy(new Error("Timeout na conexão com a SEFAZ"));
     });
-    req.write(bodyBytes);
+    req.write(fullRequest);
     req.end();
   });
 }
 
+function decodeChunked(body) {
+  let result = "";
+  let pos = 0;
+  while (pos < body.length) {
+    const lineEnd = body.indexOf("\r\n", pos);
+    if (lineEnd === -1) break;
+    const chunkSize = parseInt(body.substring(pos, lineEnd), 16);
+    if (isNaN(chunkSize) || chunkSize === 0) break;
+    pos = lineEnd + 2;
+    result += body.substring(pos, pos + chunkSize);
+    pos += chunkSize + 2;
+  }
+  return result;
+}
+
+/**
+ * Faz uma requisição HTTPS JSON com mTLS (para ADN/NFS-e Nacional).
+ */
 function makeJsonMtlsRequest(hostname, path, method, body, certPem, keyPem) {
   return new Promise((resolve, reject) => {
     const bodyStr = body ? JSON.stringify(body) : null;
@@ -136,7 +238,7 @@ function makeJsonMtlsRequest(hostname, path, method, body, certPem, keyPem) {
 
     req.on("error", reject);
     req.on("timeout", () => {
-      req.destroy(new Error("Timeout na conexao com ADN"));
+      req.destroy(new Error("Timeout na conexão com ADN"));
     });
     if (bodyBytes) req.write(bodyBytes);
     req.end();
@@ -147,7 +249,7 @@ app.post("/adn/request", authMiddleware, async (req, res) => {
   try {
     const { method, path, body, pfxUrl, password } = req.body;
     if (!method || !path || !pfxUrl || !password) {
-      return res.status(400).json({ error: "method, path, pfxUrl e password sao obrigatorios" });
+      return res.status(400).json({ error: "method, path, pfxUrl e password são obrigatórios" });
     }
 
     const pfxResponse = await fetch(pfxUrl);
@@ -177,17 +279,24 @@ app.post("/sefaz/distribuicao", authMiddleware, async (req, res) => {
   try {
     const { soapBody, pfxUrl, password } = req.body;
     if (!soapBody || !pfxUrl || !password) {
-      return res.status(400).json({ error: "soapBody, pfxUrl e password sao obrigatorios" });
+      return res.status(400).json({
+        error: "soapBody, pfxUrl e password são obrigatórios",
+      });
     }
 
+    // Baixa o PFX
     const pfxResponse = await fetch(pfxUrl);
     if (!pfxResponse.ok) {
-      return res.status(502).json({ error: "Erro ao baixar certificado PFX" });
+      return res
+        .status(502)
+        .json({ error: "Erro ao baixar certificado PFX" });
     }
     const pfxBuffer = Buffer.from(await pfxResponse.arrayBuffer());
 
+    // Extrai credenciais
     const { certPem, keyPem } = extractPfxCredentials(pfxBuffer, password);
 
+    // Envia para SEFAZ
     const responseXml = await sendToSefaz(soapBody, certPem, keyPem);
 
     res.json({ xml: responseXml });
@@ -197,8 +306,54 @@ app.post("/sefaz/distribuicao", authMiddleware, async (req, res) => {
   }
 });
 
+app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
+  try {
+    const { eventXml, pfxUrl, password } = req.body;
+    if (!eventXml || !pfxUrl || !password) {
+      return res.status(400).json({ error: "eventXml, pfxUrl e password são obrigatórios" });
+    }
+
+    const pfxResponse = await fetch(pfxUrl);
+    if (!pfxResponse.ok) {
+      return res.status(502).json({ error: "Erro ao baixar certificado PFX" });
+    }
+    const pfxBuffer = Buffer.from(await pfxResponse.arrayBuffer());
+    const { certPem, keyPem } = extractPfxCredentials(pfxBuffer, password);
+
+    const signedXml = signEventXml(eventXml, certPem, keyPem);
+
+    const soapEnvelope =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">' +
+      '<soap12:Header>' +
+      '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
+      '<cUF>91</cUF><versaoDados>1.00</versaoDados>' +
+      '</nfeCabecMsg>' +
+      '</soap12:Header>' +
+      '<soap12:Body>' +
+      '<nfeRecepcaoEvento xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
+      '<nfeDadosMsg>' +
+      signedXml +
+      '</nfeDadosMsg>' +
+      '</nfeRecepcaoEvento>' +
+      '</soap12:Body>' +
+      '</soap12:Envelope>';
+
+    const responseXml = await sendToSefaz(soapEnvelope, certPem, keyPem, {
+      host: "www1.nfe.fazenda.gov.br",
+      path: "/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+      action: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento",
+    });
+
+    res.json({ xml: responseXml });
+  } catch (error) {
+    console.error("Erro no proxy manifestação:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
-  console.log("Proxy SEFAZ rodando na porta " + PORT);
+  console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
 });
