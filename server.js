@@ -74,7 +74,7 @@ function signEventXml(eventXml, certPem, keyPem) {
   sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
   sig.keyInfoProvider = {
     getKeyInfo: function () {
-      return '<X509Data><X509Certificate>' + certBase64 + '</X509Certificate></X509Data>';
+      return '<ds:X509Data><ds:X509Certificate>' + certBase64 + '</ds:X509Certificate></ds:X509Data>';
     },
   };
   sig.addReference(
@@ -380,7 +380,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "2.7.0-soap12", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.2", hasCabecMsg: true, hasEnvEvento: true, deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "2.8.0-ds-prefix", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.2", hasCabecMsg: true, hasEnvEvento: true, hasDsPrefix: true, deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
