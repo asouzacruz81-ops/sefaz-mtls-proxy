@@ -74,7 +74,7 @@ function signEventXml(eventXml, certPem, keyPem) {
   sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
   sig.keyInfoProvider = {
     getKeyInfo: function () {
-      return '<ds:X509Data><ds:X509Certificate>' + certBase64 + '</ds:X509Certificate></ds:X509Data>';
+      return '<X509Data><X509Certificate>' + certBase64 + '</X509Certificate></X509Data>';
     },
   };
   sig.addReference(
@@ -83,7 +83,6 @@ function signEventXml(eventXml, certPem, keyPem) {
     "http://www.w3.org/2000/09/xmldsig#sha1"
   );
   sig.computeSignature(eventXml, {
-    prefix: "ds",
     location: { reference: "//*[local-name()='infEvento']", action: "after" },
   });
   return sig.getSignedXml();
@@ -377,7 +376,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "2.9.0-soap11-bare", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasEnvEvento: true, hasDsPrefix: true, bareNfeDadosMsg: true, deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "3.0.0-no-ds-prefix", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasEnvEvento: true, bareNfeDadosMsg: true, defaultNsSig: true, deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
