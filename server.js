@@ -313,13 +313,25 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
       '</soap12:Body>' +
       '</soap12:Envelope>';
 
-    const responseXml = await sendToSefaz(soapEnvelope, certPem, keyPem, {
+    const manifestacaoOptions = {
       host: "www.nfe.fazenda.gov.br",
       path: "/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
       action: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento",
-    });
+    };
+    console.log("[manifestacao] Enviando para host:", manifestacaoOptions.host, "path:", manifestacaoOptions.path);
 
-    res.json({ xml: responseXml });
+    try {
+      const responseXml = await sendToSefaz(soapEnvelope, certPem, keyPem, manifestacaoOptions);
+      res.json({ xml: responseXml });
+    } catch (sefazError) {
+      console.log("[manifestacao] Erro SEFAZ:", sefazError.message);
+      res.status(500).json({ 
+        error: sefazError.message,
+        host: manifestacaoOptions.host,
+        path: manifestacaoOptions.path,
+        proxyVersion: "2.1.0-fix-manifestacao"
+      });
+    }
   } catch (error) {
     console.error("Erro no proxy manifestação:", error.message);
     res.status(500).json({ error: error.message });
@@ -327,6 +339,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "2.1.0-fix-manifestacao", manifestacaoHost: "www.nfe.fazenda.gov.br", deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
