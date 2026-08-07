@@ -306,6 +306,23 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 
     const signedXml = signEventXml(eventXml, certPem, keyPem);
 
+    // Debug: se ?debug=true, retorna o XML assinado e o envelope completo sem enviar à SEFAZ
+    if (req.body.debug === true || req.query.debug === "true") {
+      const soapEnvelope =
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' +
+        '<soap:Header>' +
+        '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><cUF>91</cUF><versaoDados>1.00</versaoDados></nfeCabecMsg>' +
+        '</soap:Header>' +
+        '<soap:Body>' +
+        '<nfeRecepcaoEventoNF xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
+        '<nfeDadosMsg>' + signedXml + '</nfeDadosMsg>' +
+        '</nfeRecepcaoEventoNF>' +
+        '</soap:Body>' +
+        '</soap:Envelope>';
+      return res.json({ signedXml: signedXml.substring(0, 3000), soapEnvelope: soapEnvelope.substring(0, 4000) });
+    }
+
     // SOAP 1.1 — SEFAZ NFeRecepcaoEvento4
     // SOAPAction correto: nfeRecepcaoEventoNF (com sufixo NF), não nfeRecepcaoEvento
     // Header: nfeCabecMsg com cUF=91 (AN) e versaoDados=1.00 — obrigatório, senão "Object reference not set"
@@ -355,7 +372,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "2.4.0-soap11-cabec", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "2.5.0-debug", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasDebug: true, deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
