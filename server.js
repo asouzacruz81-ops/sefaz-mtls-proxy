@@ -306,6 +306,15 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 
     const signedXml = signEventXml(eventXml, certPem, keyPem);
 
+    // Garante que o XML assinado esteja envolvido em <envEvento> com <idLote>
+    // SEFAZ exige nfeDadosMsg > envEvento > idLote + evento(assinado)
+    let nfeDadosContent;
+    if (eventXml.includes('<envEvento') || eventXml.includes('envEvento')) {
+      nfeDadosContent = signedXml;
+    } else {
+      nfeDadosContent = '<envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote>' + signedXml + '</envEvento>';
+    }
+
     // Debug: se ?debug=true, retorna o XML assinado e o envelope completo sem enviar à SEFAZ
     if (req.body.debug === true || req.query.debug === "true") {
       const soapEnvelope =
@@ -316,11 +325,11 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
         '</soap:Header>' +
         '<soap:Body>' +
         '<nfeRecepcaoEventoNF xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
-        '<nfeDadosMsg>' + signedXml + '</nfeDadosMsg>' +
+        '<nfeDadosMsg>' + nfeDadosContent + '</nfeDadosMsg>' +
         '</nfeRecepcaoEventoNF>' +
         '</soap:Body>' +
         '</soap:Envelope>';
-      return res.json({ signedXml: signedXml.substring(0, 3000), soapEnvelope: soapEnvelope.substring(0, 4000) });
+      return res.json({ signedXml: nfeDadosContent.substring(0, 3000), soapEnvelope: soapEnvelope.substring(0, 4000) });
     }
 
     // SOAP 1.1 — SEFAZ NFeRecepcaoEvento4
@@ -339,7 +348,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
       '<soap:Body>' +
       '<nfeRecepcaoEventoNF xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
       '<nfeDadosMsg>' +
-      signedXml +
+      nfeDadosContent +
       '</nfeDadosMsg>' +
       '</nfeRecepcaoEventoNF>' +
       '</soap:Body>' +
@@ -372,7 +381,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "2.5.0-debug", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasDebug: true, deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "2.6.0-envEvento", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasEnvEvento: true, deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
