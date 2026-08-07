@@ -314,7 +314,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
       '</soap12:Envelope>';
 
     const responseXml = await sendToSefaz(soapEnvelope, certPem, keyPem, {
-      host: "www1.nfe.fazenda.gov.br",
+      host: "www.nfe.fazenda.gov.br",
       path: "/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
       action: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento",
     });
