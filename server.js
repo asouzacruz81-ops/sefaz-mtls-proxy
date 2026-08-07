@@ -98,19 +98,6 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
   const action = options.action || SOAP_ACTION;
   return new Promise((resolve, reject) => {
     const bodyBytes = Buffer.from(soapBody, "utf-8");
-    const httpRequest =
-      `POST ${path} HTTP/1.1\r\n` +
-      `Host: ${host}\r\n` +
-      `Content-Type: application/soap+xml; charset=utf-8; action="${action}"\r\n` +
-      `Content-Length: ${bodyBytes.length}\r\n` +
-      `User-Agent: BuscaNotas/1.0\r\n` +
-      `Connection: close\r\n` +
-      `\r\n`;
-
-    const fullRequest = Buffer.concat([
-      Buffer.from(httpRequest, "utf-8"),
-      bodyBytes,
-    ]);
 
     const agent = new https.Agent({
       cert: certPem,
@@ -128,8 +115,9 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
         agent,
         headers: {
           "Content-Type": `application/soap+xml; charset=utf-8; action="${action}"`,
-          "Content-Length": fullRequest.length,
+          "Content-Length": bodyBytes.length,
           "User-Agent": "BuscaNotas/1.0",
+          "Connection": "close",
         },
         timeout: 60000,
       },
@@ -137,29 +125,15 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
         res.on("end", () => {
-          const fullResponse = Buffer.concat(chunks).toString("utf-8");
-          const headerEnd = fullResponse.indexOf("\r\n\r\n");
-          if (headerEnd === -1) {
-            reject(
-              new Error(
-                `Resposta sem cabeçalho. bytes=${fullResponse.length}`
-              )
-            );
-            return;
-          }
-          const headerStr = fullResponse.substring(0, headerEnd);
-          let body = fullResponse.substring(headerEnd + 4);
+          let body = Buffer.concat(chunks).toString("utf-8");
 
-          if (headerStr.toLowerCase().includes("transfer-encoding: chunked")) {
+          if (res.headers["transfer-encoding"] && res.headers["transfer-encoding"].includes("chunked")) {
             body = decodeChunked(body);
           }
 
-          const statusCode = parseInt(
-            headerStr.split("\r\n")[0].split(" ")[1]
-          );
-          if (statusCode !== 200) {
+          if (res.statusCode !== 200) {
             reject(
-              new Error(`SEFAZ HTTP ${statusCode}: ${body.substring(0, 1000)}`)
+              new Error(`SEFAZ HTTP ${res.statusCode}: ${body.substring(0, 1000)}`)
             );
             return;
           }
@@ -172,7 +146,7 @@ function sendToSefaz(soapBody, certPem, keyPem, options = {}) {
     req.on("timeout", () => {
       req.destroy(new Error("Timeout na conexão com a SEFAZ"));
     });
-    req.write(fullRequest);
+    req.write(bodyBytes);
     req.end();
   });
 }
