@@ -260,7 +260,7 @@ app.post("/adn/request", authMiddleware, async (req, res) => {
 
 app.post("/sefaz/distribuicao", authMiddleware, async (req, res) => {
   try {
-    const { soapBody, pfxUrl, password } = req.body;
+    const { soapBody, pfxUrl, password, options } = req.body;
     if (!soapBody || !pfxUrl || !password) {
       return res.status(400).json({
         error: "soapBody, pfxUrl e password são obrigatórios",
@@ -279,8 +279,8 @@ app.post("/sefaz/distribuicao", authMiddleware, async (req, res) => {
     // Extrai credenciais
     const { certPem, keyPem } = extractPfxCredentials(pfxBuffer, password);
 
-    // Envia para SEFAZ
-    const responseXml = await sendToSefaz(soapBody, certPem, keyPem);
+    // Envia para SEFAZ (com options para suportar CTeDistribuicaoDFe e outros hosts)
+    const responseXml = await sendToSefaz(soapBody, certPem, keyPem, options || {});
 
     res.json({ xml: responseXml });
   } catch (error) {
@@ -376,7 +376,7 @@ app.post("/sefaz/manifestacao", authMiddleware, async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/version", (req, res) => res.json({ ok: true, version: "3.1.0-inclusive-c14n", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasEnvEvento: true, bareNfeDadosMsg: true, defaultNsSig: true, inclusiveC14n: true, deployTime: new Date().toISOString() }));
+app.get("/version", (req, res) => res.json({ ok: true, version: "3.2.0-cte-support", manifestacaoHost: "www.nfe.fazenda.gov.br", soapAction: "nfeRecepcaoEventoNF", soapVersion: "1.1", hasCabecMsg: true, hasEnvEvento: true, bareNfeDadosMsg: true, defaultNsSig: true, inclusiveC14n: true, cteSupport: true, distribuicaoOptions: true, deployTime: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`Proxy SEFAZ rodando na porta ${PORT}`);
